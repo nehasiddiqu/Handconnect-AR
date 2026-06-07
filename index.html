@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Hand Tracking AR</title>
+    
+    <!-- MediaPipe Hands CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        :root {
+            --bg-color: #050510;
+            --text-color: #ffffff;
+            --glass-bg: rgba(20, 25, 40, 0.4);
+            --glass-border: rgba(255, 255, 255, 0.15);
+            --glass-blur: blur(16px);
+            --accent: #00ffcc;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            overflow: hidden;
+        }
+
+        .video-container {
+            position: absolute;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        .input_video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror */
+            z-index: 0; /* Let the raw camera sit behind */
+            filter: brightness(0.6) contrast(1.1); /* Subtle dark to make neon pop */
+        }
+
+        /* 
+         * Background Canvas captures the video frame and applies the matrix rain/starfield 
+         */
+        #bgCanvas, #mainCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror */
+        }
+        
+        #bgCanvas {
+            z-index: 1;
+            pointer-events: none;
+        }
+
+        #mainCanvas {
+            z-index: 5;
+            pointer-events: none;
+            /* We use mix-blend-mode for the glowing effects in canvas */
+        }
+
+        /* UI Overlays */
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            pointer-events: none;
+        }
+
+        .panel {
+            background: var(--glass-bg);
+            backdrop-filter: var(--glass-blur);
+            -webkit-backdrop-filter: var(--glass-blur);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 15px 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        .stat {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.8);
+            min-width: 180px;
+        }
+        .stat:last-child { margin-bottom: 0; }
+        .stat span.val { font-weight: bold; color: var(--accent); }
+
+        /* Themes */
+        #themes {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            display: flex;
+            gap: 10px;
+            background: var(--glass-bg);
+            backdrop-filter: var(--glass-blur);
+            border: 1px solid var(--glass-border);
+            border-radius: 30px;
+            padding: 8px;
+            transition: opacity 0.5s;
+        }
+
+        .theme-btn {
+            background: transparent;
+            border: 1px solid transparent;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: 0.3s ease;
+            font-weight: 500;
+        }
+        
+        .theme-btn.active {
+            background: rgba(255,255,255,0.15);
+            border-color: rgba(255,255,255,0.3);
+            text-shadow: 0 0 10px white;
+        }
+
+        /* Start Overlay */
+        #startOverlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(0,0,0,0.85);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(10px);
+            transition: opacity 0.5s ease;
+        }
+
+        .start-btn {
+            padding: 16px 40px;
+            font-size: 1.2rem;
+            background: linear-gradient(45deg, #ff00cc, #3333ff);
+            border: none;
+            color: white;
+            border-radius: 30px;
+            cursor: pointer;
+            box-shadow: 0 0 20px rgba(255, 0, 204, 0.5);
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            transition: transform 0.2s;
+        }
+        .start-btn:hover { transform: scale(1.05); }
+
+
+        /* Permanent animated name title and personal logo */
+        #nameHeader {
+            position: absolute;
+            top: 18px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 10px 22px;
+            border-radius: 999px;
+            background: rgba(5, 5, 16, 0.62);
+            border: 1px solid rgba(255,255,255,0.2);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            box-shadow: 0 0 26px rgba(0, 255, 204, 0.25), inset 0 0 14px rgba(255,255,255,0.06);
+            pointer-events: none;
+        }
+
+        #profileLogo {
+            width: 58px;
+            height: 58px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid var(--accent);
+            box-shadow: 0 0 18px var(--accent);
+            background: #fff;
+        }
+
+        #animatedName {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-size: clamp(1rem, 2.4vw, 2rem);
+            font-weight: 800;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: #ffffff;
+            text-shadow: 0 0 10px var(--accent), 0 0 26px rgba(255,255,255,0.45);
+            white-space: nowrap;
+        }
+
+        .name-letter {
+            opacity: 0;
+            transform: translateY(-12px) scale(0.82);
+            animation: letterReveal 0.75s ease forwards, letterGlow 2.8s ease-in-out infinite;
+            animation-delay: calc(var(--i) * 0.32s), calc(var(--i) * 0.32s + 0.75s);
+        }
+
+        .name-space {
+            width: 18px;
+        }
+
+        @keyframes letterReveal {
+            0% { opacity: 0; transform: translateY(-12px) scale(0.82); filter: blur(6px); }
+            70% { opacity: 1; transform: translateY(2px) scale(1.08); filter: blur(0); }
+            100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+        }
+
+        @keyframes letterGlow {
+            0%, 100% { text-shadow: 0 0 8px var(--accent), 0 0 18px rgba(255,255,255,0.36); }
+            50% { text-shadow: 0 0 18px var(--accent), 0 0 34px rgba(255,255,255,0.75); }
+        }
+
+        @media (max-width: 700px) {
+            #nameHeader { top: 10px; gap: 9px; padding: 8px 14px; }
+            #profileLogo { width: 44px; height: 44px; }
+            #animatedName { gap: 4px; letter-spacing: 0.11em; }
+            .name-space { width: 10px; }
+        }
+
+        .hidden { opacity: 0; pointer-events: none; }
+    </style>
+</head>
+<body>
+
+    <header id="nameHeader" aria-label="Neha Siddiqui animated title">
+        <img id="profileLogo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABB4AAAXUCAYAAABpos9VAAAQAElEQVR4Acy8i4LjOK5si5j//+WW7logKVOynVnVM+ecq2QQQCAAPuR0Vff03v85/jnP4zjOf/4R/5zHP+A4Bnecgz8mdx7[...]
